@@ -1,10 +1,13 @@
 // Zero-dependency server: serves ./public and a small JSON API backed by data/sessions.json
 const http = require('http');
+const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
+// 127.0.0.1 = this computer only. Use HOST=0.0.0.0 (npm run start:lan) to allow phones on your Wi-Fi.
+const HOST = process.env.HOST || '127.0.0.1';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const DATA_DIR = path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'sessions.json');
@@ -14,6 +17,7 @@ const MIME = {
   '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.svg': 'image/svg+xml',
+  '.webmanifest': 'application/manifest+json',
   '.ico': 'image/x-icon',
 };
 
@@ -139,6 +143,14 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, '127.0.0.1', () => {
+server.listen(PORT, HOST, () => {
   console.log(`Gym tracker running at http://localhost:${PORT}`);
+  if (HOST === '127.0.0.1') return;
+  const urls = Object.values(os.networkInterfaces())
+    .flat()
+    .filter((i) => i.family === 'IPv4' && !i.internal)
+    .map((i) => `http://${i.address}:${PORT}`);
+  console.log('On your phone (same Wi-Fi), open:');
+  for (const url of urls) console.log(`  ${url}`);
+  console.log('Note: there is no password, so anyone on this network can open it.');
 });

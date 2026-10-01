@@ -105,13 +105,18 @@ function renderCalendar() {
 
     const daySessions = sessionsOn(dateStr);
     for (const s of daySessions) {
-      const chip = el('span', { className: 'chip', title: s.notes || '' }, `${s.type} · ${formatMinutes(s.minutes)}`);
+      const chip = el(
+        'span',
+        { className: 'chip', title: s.notes || '' },
+        el('span', { className: 't' }, s.type),
+        el('span', { className: 'd' }, formatMinutes(s.minutes))
+      );
       chip.style.background = colorFor(s.type);
       cell.append(chip);
     }
     if (daySessions.length > 1) {
       const total = daySessions.reduce((sum, s) => sum + s.minutes, 0);
-      cell.append(el('span', { className: 'total' }, `Total ${formatMinutes(total)}`));
+      cell.append(el('span', { className: 'total' }, el('span', { className: 'lbl' }, 'Total '), formatMinutes(total)));
     }
 
     cell.addEventListener('click', () => openDay(dateStr));

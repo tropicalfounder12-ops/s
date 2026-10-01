@@ -4,7 +4,8 @@
   "description": "Local gym session tracker with a calendar view",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "start:lan": "HOST=0.0.0.0 node server.js"
   },
   "engines": {
     "node": ">=18"
