@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gym Tracker – Log in</title>
+  <link rel="icon" href="icon.svg">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#2563eb">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="login-page">
+  <form id="loginForm" class="login-card">
+    <h1>Gym Tracker</h1>
+    <label>Password
+      <input id="password" type="password" autocomplete="current-password" required autofocus>
+    </label>
+    <p id="error" class="error" hidden></p>
+    <button type="submit">Log in</button>
+  </form>
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = document.getElementById('error');
+      err.hidden = true;
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: document.getElementById('password').value }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || 'Login failed');
+        location.href = '/';
+      } catch (ex) {
+        err.textContent = ex.message;
+        err.hidden = false;
+      }
+    });
+  </script>
+</body>
+</html>

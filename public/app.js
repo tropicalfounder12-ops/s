@@ -66,6 +66,10 @@ async function api(path, options) {
     headers: { 'Content-Type': 'application/json' },
     ...options,
   });
+  if (res.status === 401) {
+    location.href = '/login.html';
+    throw new Error('Not logged in');
+  }
   const body = await res.json();
   if (!res.ok) throw new Error(body.error || 'Request failed');
   return body;
@@ -313,8 +317,15 @@ $('today').addEventListener('click', () => {
 
 // ---------- init ----------
 
+$('logout').addEventListener('click', async () => {
+  await fetch('/api/logout', { method: 'POST' });
+  location.href = '/login.html';
+});
+
 (async function init() {
   try {
+    const me = await api('/api/me');
+    $('logout').hidden = !me.authRequired;
     state.sessions = await api('/api/sessions');
   } catch (err) {
     alert(`Could not load sessions: ${err.message}`);

@@ -189,3 +189,16 @@ input, textarea {
 }
 .actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
 .error { color: var(--danger); margin: 0; font-size: 0.85rem; }
+
+.login-page { display: grid; place-items: center; min-height: 100vh; padding: 1rem; }
+.login-card {
+  width: min(360px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.5rem;
+  display: grid;
+  gap: 0.9rem;
+}
+.login-card h1 { margin: 0; font-size: 1.3rem; }
+.login-card input { font-size: 16px; }

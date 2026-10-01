@@ -8,8 +8,20 @@ const crypto = require('crypto');
 const PORT = process.env.PORT || 3000;
 // 127.0.0.1 = this computer only. Use HOST=0.0.0.0 (npm run start:lan) to allow phones on your Wi-Fi.
 const HOST = process.env.HOST || '127.0.0.1';
+// Set PASSWORD to require a login (always do this when the app is reachable from the internet).
+const PASSWORD = process.env.PASSWORD || '';
+const SESSION_DAYS = 30;
+const COOKIE_NAME = 'gym_session';
+// Behind a reverse proxy (Fly, Render, Cloudflare...) set TRUST_PROXY=1 so login throttling sees real IPs.
+const TRUST_PROXY = process.env.TRUST_PROXY === '1';
+const SECRET = crypto.createHash('sha256').update(`gym-tracker:${process.env.SESSION_SECRET || PASSWORD}`).digest();
+
+if (!PASSWORD && HOST !== '127.0.0.1' && process.env.NODE_ENV === 'production') {
+  console.error('Refusing to start: set PASSWORD when the app is exposed beyond this computer.');
+  process.exit(1);
+}
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const DATA_DIR = path.join(__dirname, 'data');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'sessions.json');
 
 const MIME = {
@@ -34,6 +46,59 @@ function saveSessions(sessions) {
   const tmp = DATA_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(sessions, null, 2));
   fs.renameSync(tmp, DATA_FILE);
+}
+
+// ---------- auth ----------
+
+function sign(value) {
+  return crypto.createHmac('sha256', SECRET).update(value).digest('base64url');
+}
+
+function makeToken() {
+  const expires = String(Date.now() + SESSION_DAYS * 86400 * 1000);
+  return `${expires}.${sign(expires)}`;
+}
+
+function safeEqual(a, b) {
+  const ha = crypto.createHash('sha256').update(String(a)).digest();
+  const hb = crypto.createHash('sha256').update(String(b)).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+function getCookie(req, name) {
+  for (const part of (req.headers.cookie || '').split(';')) {
+    const [k, ...v] = part.trim().split('=');
+    if (k === name) return v.join('=');
+  }
+  return '';
+}
+
+function isAuthed(req) {
+  if (!PASSWORD) return true;
+  const [expires, sig] = getCookie(req, COOKIE_NAME).split('.');
+  if (!expires || !sig || !safeEqual(sig, sign(expires))) return false;
+  return Number(expires) > Date.now();
+}
+
+function cookieHeader(req, value, maxAgeSec) {
+  const secure = req.socket.encrypted || req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
+  return `${COOKIE_NAME}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAgeSec}${secure}`;
+}
+
+// Throttle wrong passwords: 8 failures per 15 minutes per client IP.
+const failures = new Map();
+function clientIp(req) {
+  if (TRUST_PROXY && req.headers['x-forwarded-for']) return req.headers['x-forwarded-for'].split(',')[0].trim();
+  return req.socket.remoteAddress;
+}
+function isThrottled(ip) {
+  const f = failures.get(ip);
+  return Boolean(f && f.count >= 8 && Date.now() - f.first < 15 * 60 * 1000);
+}
+function recordFailure(ip) {
+  const f = failures.get(ip);
+  if (!f || Date.now() - f.first >= 15 * 60 * 1000) failures.set(ip, { count: 1, first: Date.now() });
+  else f.count += 1;
 }
 
 function sendJson(res, status, body) {
@@ -78,6 +143,30 @@ function validate(input) {
 }
 
 async function handleApi(req, res, pathname) {
+  if (pathname === '/api/me' && req.method === 'GET') {
+    return sendJson(res, 200, { authRequired: Boolean(PASSWORD), loggedIn: isAuthed(req) });
+  }
+
+  if (pathname === '/api/login' && req.method === 'POST') {
+    const ip = clientIp(req);
+    if (isThrottled(ip)) return sendJson(res, 429, { error: 'Too many attempts. Try again in 15 minutes.' });
+    const { password } = await readBody(req);
+    if (!PASSWORD || !safeEqual(password || '', PASSWORD)) {
+      recordFailure(ip);
+      return sendJson(res, 401, { error: 'Wrong password' });
+    }
+    failures.delete(ip);
+    res.setHeader('Set-Cookie', cookieHeader(req, makeToken(), SESSION_DAYS * 86400));
+    return sendJson(res, 200, { ok: true });
+  }
+
+  if (pathname === '/api/logout' && req.method === 'POST') {
+    res.setHeader('Set-Cookie', cookieHeader(req, '', 0));
+    return sendJson(res, 200, { ok: true });
+  }
+
+  if (!isAuthed(req)) return sendJson(res, 401, { error: 'Not logged in' });
+
   const idMatch = pathname.match(/^\/api\/sessions\/([\w-]+)$/);
 
   if (pathname === '/api/sessions' && req.method === 'GET') {
@@ -118,6 +207,10 @@ async function handleApi(req, res, pathname) {
 
 function serveStatic(req, res, pathname) {
   const rel = pathname === '/' ? '/index.html' : pathname;
+  if (rel === '/index.html' && !isAuthed(req)) {
+    res.writeHead(302, { Location: '/login.html' });
+    return res.end();
+  }
   const file = path.normalize(path.join(PUBLIC_DIR, rel));
   if (!file.startsWith(PUBLIC_DIR)) {
     res.writeHead(403);
@@ -144,7 +237,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`Gym tracker running at http://localhost:${PORT}`);
+  console.log(`Gym tracker running at http://localhost:${PORT}${PASSWORD ? ' (password protected)' : ''}`);
   if (HOST === '127.0.0.1') return;
   const urls = Object.values(os.networkInterfaces())
     .flat()
@@ -152,5 +245,5 @@ server.listen(PORT, HOST, () => {
     .map((i) => `http://${i.address}:${PORT}`);
   console.log('On your phone (same Wi-Fi), open:');
   for (const url of urls) console.log(`  ${url}`);
-  console.log('Note: there is no password, so anyone on this network can open it.');
+  if (!PASSWORD) console.log('Note: no PASSWORD set, so anyone on this network can open it.');
 });
