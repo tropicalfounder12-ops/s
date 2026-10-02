@@ -49,7 +49,6 @@ The container sets `HOST=0.0.0.0`, `DATA_DIR=/data` and `TRUST_PROXY=1`, and ref
 | `PASSWORD` | turns on the login | none |
 | `DATA_DIR` | where `sessions.json` is stored | `./data` |
 | `SESSION_SECRET` | signs login cookies (defaults to a key derived from `PASSWORD`) | |
-| `ANTHROPIC_API_KEY` | turns on the Claude features; keep it in the environment or your host's secrets, never in git | none |
 | `TRUST_PROXY` | `1` when behind a proxy, so login throttling sees the real client IP | off |
 
 To make it feel like an app, use "Add to Home Screen" in your phone's browser menu.

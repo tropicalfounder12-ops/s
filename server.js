@@ -14,8 +14,6 @@ const SESSION_DAYS = 30;
 const COOKIE_NAME = 'gym_session';
 // Behind a reverse proxy (Fly, Render, Cloudflare...) set TRUST_PROXY=1 so login throttling sees real IPs.
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
-// Optional: enables the Claude-powered features. Read from the environment only, never commit it.
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const SECRET = crypto.createHash('sha256').update(`gym-tracker:${process.env.SESSION_SECRET || PASSWORD}`).digest();
 
 if (!PASSWORD && HOST !== '127.0.0.1' && process.env.NODE_ENV === 'production') {
@@ -146,11 +144,7 @@ function validate(input) {
 
 async function handleApi(req, res, pathname) {
   if (pathname === '/api/me' && req.method === 'GET') {
-    return sendJson(res, 200, {
-      authRequired: Boolean(PASSWORD),
-      loggedIn: isAuthed(req),
-      aiEnabled: Boolean(ANTHROPIC_API_KEY),
-    });
+    return sendJson(res, 200, { authRequired: Boolean(PASSWORD), loggedIn: isAuthed(req) });
   }
 
   if (pathname === '/api/login' && req.method === 'POST') {
@@ -244,7 +238,6 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`Gym tracker running at http://localhost:${PORT}${PASSWORD ? ' (password protected)' : ''}`);
-  console.log(ANTHROPIC_API_KEY ? 'Claude features: on' : 'Claude features: off (set ANTHROPIC_API_KEY to enable)');
   if (HOST === '127.0.0.1') return;
   const urls = Object.values(os.networkInterfaces())
     .flat()
