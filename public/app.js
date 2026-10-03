@@ -315,6 +315,26 @@ $('today').addEventListener('click', () => {
   renderCalendar();
 });
 
+// ---------- coach ----------
+
+$('askCoach').addEventListener('click', async () => {
+  const button = $('askCoach');
+  const out = $('coachText');
+  button.disabled = true;
+  button.textContent = 'Thinking...';
+  try {
+    const { text } = await api('/api/coach', { method: 'POST', body: JSON.stringify({ today: todayStr() }) });
+    out.textContent = text;
+    out.classList.remove('error');
+  } catch (err) {
+    out.textContent = err.message;
+    out.classList.add('error');
+  }
+  out.hidden = false;
+  button.disabled = false;
+  button.textContent = 'Ask again';
+});
+
 // ---------- init ----------
 
 $('logout').addEventListener('click', async () => {
@@ -326,6 +346,7 @@ $('logout').addEventListener('click', async () => {
   try {
     const me = await api('/api/me');
     $('logout').hidden = !me.authRequired;
+    $('coach').hidden = !me.coach;
     state.sessions = await api('/api/sessions');
   } catch (err) {
     alert(`Could not load sessions: ${err.message}`);

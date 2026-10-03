@@ -23,6 +23,8 @@ if (!PASSWORD && HOST !== '127.0.0.1' && process.env.NODE_ENV === 'production') 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'sessions.json');
+// Optional "Ask the coach" (Claude): set ANTHROPIC_API_KEY and run `npm install` to turn it on.
+const coach = process.env.ANTHROPIC_API_KEY ? require('./coach') : null;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -127,9 +129,13 @@ function readBody(req) {
   });
 }
 
+function isDate(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value));
+}
+
 function validate(input) {
   const date = String(input.date || '');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) {
+  if (!isDate(date)) {
     return { error: 'date must be YYYY-MM-DD' };
   }
   const type = String(input.type || '').trim().slice(0, 40);
@@ -144,7 +150,7 @@ function validate(input) {
 
 async function handleApi(req, res, pathname) {
   if (pathname === '/api/me' && req.method === 'GET') {
-    return sendJson(res, 200, { authRequired: Boolean(PASSWORD), loggedIn: isAuthed(req) });
+    return sendJson(res, 200, { authRequired: Boolean(PASSWORD), loggedIn: isAuthed(req), coach: Boolean(coach) });
   }
 
   if (pathname === '/api/login' && req.method === 'POST') {
@@ -202,6 +208,17 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, 200, { ok: true });
   }
 
+  if (pathname === '/api/coach' && req.method === 'POST') {
+    if (!coach) return sendJson(res, 503, { error: 'The coach is off: set ANTHROPIC_API_KEY on the server.' });
+    const { today } = await readBody(req);
+    if (!isDate(String(today))) return sendJson(res, 400, { error: 'today must be YYYY-MM-DD' });
+    try {
+      return sendJson(res, 200, { text: await coach.review(loadSessions(), today) });
+    } catch (err) {
+      return sendJson(res, 502, { error: err.message });
+    }
+  }
+
   return sendJson(res, 404, { error: 'Not found' });
 }
 
@@ -238,6 +255,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`Gym tracker running at http://localhost:${PORT}${PASSWORD ? ' (password protected)' : ''}`);
+  if (coach) console.log('Coach is on (ANTHROPIC_API_KEY is set).');
   if (HOST === '127.0.0.1') return;
   const urls = Object.values(os.networkInterfaces())
     .flat()

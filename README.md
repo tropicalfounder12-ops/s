@@ -2,7 +2,7 @@
 
 A small local app to log gym sessions (chest, legs, arms, abs, ...) on a calendar, with how long each one took.
 
-No dependencies: just Node.js 18+.
+Runs on plain Node.js 18+. The optional AI coach (below) also needs `npm install` and Node.js 20+.
 
 ## Run
 
@@ -50,8 +50,19 @@ The container sets `HOST=0.0.0.0`, `DATA_DIR=/data` and `TRUST_PROXY=1`, and ref
 | `DATA_DIR` | where `sessions.json` is stored | `./data` |
 | `SESSION_SECRET` | signs login cookies (defaults to a key derived from `PASSWORD`) | |
 | `TRUST_PROXY` | `1` when behind a proxy, so login throttling sees the real client IP | off |
+| `ANTHROPIC_API_KEY` | turns on the AI coach (see below) | none |
 
 To make it feel like an app, use "Add to Home Screen" in your phone's browser menu.
+
+## AI coach (Claude)
+
+An "Ask the coach" button in the side panel sends your last 8 weeks of sessions to Claude and shows a short review: what's going well, what's missing, and what to train next.
+
+1. Create an API key in the [Claude Console](https://platform.claude.com/settings/keys) (it needs billing set up; each click is one paid request).
+2. Install the SDK once: `npm install`.
+3. Start the app with the key: `ANTHROPIC_API_KEY='sk-ant-...' npm start` (Windows PowerShell: `$env:ANTHROPIC_API_KEY='sk-ant-...'; npm start`). On a hosted server, add `ANTHROPIC_API_KEY` as an env var or secret.
+
+The key stays on the server; the browser only talks to `/api/coach`. Without the key the button is hidden and nothing is sent anywhere. With it, each click sends those sessions (dates, types, minutes and notes) to Anthropic's API. The model and prompt are at the top of `coach.js`.
 
 ## Usage
 

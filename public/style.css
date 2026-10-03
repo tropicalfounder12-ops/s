@@ -147,6 +147,10 @@ button:hover { filter: brightness(1.08); }
 .breakdown .bar { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
 .breakdown .bar i { display: block; height: 100%; }
 .empty { color: var(--muted); font-size: 0.85rem; }
+.coach { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+.coach button { width: 100%; }
+.coach button:disabled { opacity: 0.6; cursor: wait; }
+.coach .coach-text { margin: 0.75rem 0 0; font-size: 0.85rem; line-height: 1.5; white-space: pre-wrap; }
 
 dialog {
   width: min(480px, 94vw);
