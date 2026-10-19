@@ -1,2 +1,3 @@
-# Optional: a low-level keyboard hook. Without it the companion polls the keyboard instead.
+# Optional: only needed for `python companion.py --hook` (a low-level keyboard hook).
+# By default the companion polls the keyboard and needs nothing installed.
 pynput>=1.7

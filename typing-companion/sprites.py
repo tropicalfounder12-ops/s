@@ -377,6 +377,94 @@ WIZ_SLEEP_B = [
 ]
 
 # ══════════════════════════════════════════════════════════════
+#  Character 4: 🐰 Mini Bunny (spring!)
+# ══════════════════════════════════════════════════════════════
+BUN_PALETTE = {
+    0: TRANSP,
+    1: "#6d5a6e",    # soft plum outline (gentler than black)
+    2: "#fffaf3",    # cream fur
+    3: "#ffc8d8",    # inner ears & cheeks
+    4: "#ff8fab",    # nose
+    5: "#ffffff",    # eye shine
+    6: "#4b3a4d",    # eyes
+    7: "#9cc8ec",    # sleep Zzz
+    8: "#ffe08a",    # sparkles
+    9: "#bfe6c6",    # mint keyboard
+}
+
+_BUN_EARS_UP = [
+    [_,_,_,_,1,1,_,_,_,_,1,1,_,_,_,_],
+    [_,_,_,1,2,2,1,_,_,1,2,2,1,_,_,_],
+    [_,_,_,1,3,2,1,_,_,1,2,3,1,_,_,_],
+    [_,_,_,1,3,2,1,_,_,1,2,3,1,_,_,_],
+    [_,_,_,1,3,2,1,_,_,1,2,3,1,_,_,_],
+    [_,_,_,1,2,2,1,1,1,1,2,2,1,_,_,_],
+]
+_BUN_EARS_FLOP = [   # right ear flops over
+    [_,_,_,_,1,1,_,_,_,_,_,_,_,_,_,_],
+    [_,_,_,1,2,2,1,_,_,_,1,1,1,1,_,_],
+    [_,_,_,1,3,2,1,_,_,1,2,2,2,2,1,_],
+    [_,_,_,1,3,2,1,_,_,1,2,3,1,1,_,_],
+    [_,_,_,1,3,2,1,_,_,1,2,3,1,_,_,_],
+    [_,_,_,1,2,2,1,1,1,1,2,2,1,_,_,_],
+]
+_BUN_FACE = [
+    [_,_,1,2,2,2,2,2,2,2,2,2,2,1,_,_],
+    [_,_,1,2,5,6,2,2,2,2,5,6,2,1,_,_],   # eyes with a little shine
+    [_,_,1,2,6,6,2,2,2,2,6,6,2,1,_,_],
+    [_,_,1,3,2,2,2,4,4,2,2,2,3,1,_,_],   # rosy cheeks + nose
+    [_,_,_,1,2,2,2,2,2,2,2,2,1,_,_,_],
+]
+_BUN_BODY = [
+    [_,_,1,2,2,2,2,2,2,2,2,2,2,1,_,_],
+    [_,1,2,2,2,2,2,2,2,2,2,2,2,2,1,_],
+    [_,1,2,2,1,2,2,2,2,2,2,1,2,2,1,1],
+    [_,1,2,2,1,2,2,2,2,2,2,1,2,2,2,1],   # fluffy tail peeking out
+    [_,_,1,1,1,1,1,1,1,1,1,1,1,1,1,_],
+]
+BUN_SIT_A = [row[:] for row in _BUN_EARS_UP + _BUN_FACE + _BUN_BODY]
+BUN_SIT_B = [row[:] for row in _BUN_EARS_FLOP + _BUN_FACE + _BUN_BODY]
+
+BUN_BLINK = [row[:] for row in BUN_SIT_A]
+BUN_BLINK[7] = [_,_,1,2,2,2,2,2,2,2,2,2,2,1,_,_]
+BUN_BLINK[8] = [_,_,1,2,1,1,2,2,2,2,1,1,2,1,_,_]
+
+BUN_TYPE_L = [row[:] for row in _BUN_EARS_UP + _BUN_FACE] + [
+    [_,_,1,2,2,2,2,2,2,2,2,2,2,1,_,_],
+    [_,1,1,2,2,2,2,2,2,2,2,2,1,_,_,_],
+    [1,2,2,1,_,_,_,_,_,1,1,_,_,_,_,_],   # left paw tapping
+    [_,1,1,9,9,9,9,9,9,9,9,1,_,_,_,_],   # mint keyboard
+    [_,_,_,1,1,1,1,1,1,1,1,_,_,_,_,_],
+]
+BUN_TYPE_R = [row[:] for row in _BUN_EARS_UP + _BUN_FACE] + [
+    [_,_,1,2,2,2,2,2,2,2,2,2,2,1,_,_],
+    [_,_,_,1,2,2,2,2,2,2,2,2,1,1,_,_],
+    [_,_,_,_,1,1,_,_,_,_,1,2,2,1,_,_],   # right paw tapping
+    [_,1,1,9,9,9,9,9,9,9,9,1,_,_,_,_],
+    [_,_,_,1,1,1,1,1,1,1,1,_,_,_,_,_],
+]
+
+# Careful: `[[_] * 16 for _ in ...]` would rebind `_` to the loop counter - use explicit zeros.
+BUN_SLEEP_A = [[0] * 16 for _row in range(8)] + [
+    [_,_,_,_,_,_,1,1,1,1,1,1,_,_,_,_],
+    [_,_,_,_,_,1,2,3,3,3,3,2,1,_,_,_],   # ears laid back
+    [_,_,1,1,1,1,1,1,1,1,1,2,2,1,_,_],
+    [_,1,2,2,2,2,2,2,2,2,2,1,1,2,1,_],
+    [1,2,1,1,2,2,2,2,2,2,2,2,2,2,1,_],   # closed eye
+    [1,3,2,2,4,2,2,2,2,2,2,2,2,2,2,1],   # cheek + nose
+    [_,1,2,2,2,2,2,2,2,2,2,2,2,2,1,1],
+    [_,_,1,1,1,1,1,1,1,1,1,1,1,1,1,_],
+]
+BUN_SLEEP_B = [row[:] for row in BUN_SLEEP_A]
+BUN_SLEEP_B[1] = [_,_,_,_,_,_,_,_,_,7,7,7,_,_,_,_]
+BUN_SLEEP_B[2] = [_,_,_,_,_,_,_,_,_,_,_,7,_,_,_,_]
+BUN_SLEEP_B[3] = [_,_,_,_,_,_,_,_,_,7,7,7,_,_,_,_]
+BUN_SLEEP_B[4] = [_,_,_,_,_,_,_,_,_,_,_,_,7,7,_,_]
+BUN_SLEEP_B[5] = [_,_,_,_,_,_,_,_,_,_,_,_,_,7,_,_]
+BUN_SLEEP_B[6] = [_,_,_,_,_,_,_,_,_,_,_,_,7,7,_,_]
+
+
+# ══════════════════════════════════════════════════════════════
 #  Frame helpers
 # ══════════════════════════════════════════════════════════════
 def _copy(frame):
@@ -448,6 +536,8 @@ CHARACTERS = {
                         BOT_TYPE_L, BOT_TYPE_R, BOT_SLEEP_A, BOT_SLEEP_B),
     "wizard": _character("🧙 Mini Wizard", WIZ_PALETTE, WIZ_IDLE_A, WIZ_IDLE_B, WIZ_BLINK,
                          WIZ_TYPE_L, WIZ_TYPE_R, WIZ_SLEEP_A, WIZ_SLEEP_B),
+    "bunny": _character("🐰 Mini Bunny", BUN_PALETTE, BUN_SIT_A, BUN_SIT_B, BUN_BLINK,
+                        BUN_TYPE_L, BUN_TYPE_R, BUN_SLEEP_A, BUN_SLEEP_B),
 }
 
 # Palette slot 8 is each character's "sparkle" colour.
@@ -455,25 +545,104 @@ for _char in CHARACTERS.values():
     _char["sparkle"] = _char["palette"][8]
 
 # ══════════════════════════════════════════════════════════════
-#  Effect shapes (drawn by the app as small squares, any scale)
+#  Little pixel shapes: effects and bubble icons
+#  Each is (rows, colours): digit N in a row is drawn with colours[N-1], "0" is empty.
 # ══════════════════════════════════════════════════════════════
 SHAPES = {
-    "heart": ["0110110",
-              "1111111",
-              "1111111",
-              "0111110",
-              "0011100",
-              "0001000"],
-    "spark": ["010",
-              "111",
-              "010"],
-    "bang":  ["11",
-              "11",
-              "11",
-              "00",
-              "11"],
-    "dot":   ["1"],
+    "heart":   (["0110110",
+                 "1211111",
+                 "1111111",
+                 "0111110",
+                 "0011100",
+                 "0001000"], ("#ff8fab", "#ffe0e8")),
+    "petal":   (["011",
+                 "110"], ("#ffc2d4",)),
+    "spark":   (["010",
+                 "121",
+                 "010"], ("#ffe08a", "#fffbe6")),
+    "bang":    (["11",
+                 "11",
+                 "11",
+                 "00",
+                 "11"], ("#ffffff",)),
+    "dot":     (["1"], ("#ffffff",)),
+    "firefly": (["010",
+                 "121",
+                 "010"], ("#f3e9a0", "#fffde0")),
+    "fly_a":   (["11011",           # butterfly, wings open
+                 "12321",
+                 "01310",
+                 "00300"], ("#cdb4f0", "#fff3b0", "#6d5a6e")),
+    "fly_b":   (["01010",           # ...and wings up
+                 "01210",
+                 "00300",
+                 "00300"], ("#cdb4f0", "#fff3b0", "#6d5a6e")),
+    # bubble icons
+    "flower":  (["01010",
+                 "11211",
+                 "01110",
+                 "00300",
+                 "03300"], ("#ff9eb8", "#ffd36e", "#6fbf7c")),
+    "cup":     (["0030300",
+                 "0003000",
+                 "1111100",
+                 "1111122",
+                 "1111102",
+                 "1111122",
+                 "0111000"], ("#9ccfff", "#9ccfff", "#d8d8e8")),
+    "sun":     (["10101",
+                 "01110",
+                 "11211",
+                 "01110",
+                 "10101"], ("#ffcf5c", "#ffe9a3")),
+    "moon":    (["01110",
+                 "11100",
+                 "11000",
+                 "11100",
+                 "01110"], ("#ffe9a3",)),
+    "star":    (["00100",
+                 "01110",
+                 "11211",
+                 "01110",
+                 "01010"], ("#ffcf5c", "#fff3c4")),
+    "leaf":    (["00011",
+                 "00121",
+                 "01210",
+                 "12100",
+                 "10000"], ("#6fbf7c", "#a6dfa9")),
 }
-HEART_COLOR = "#ff5277"
-BANG_COLOR = "#ffffff"
-CONFETTI_COLORS = ("#ff4757", "#ffa502", "#ffd32a", "#2ed573", "#1e90ff", "#a29bfe")
+PETAL_COLORS = ("#ffc2d4", "#ffd6e2", "#ffe8ef", "#fff6f8")
+BUTTERFLY_WINGS = ("#cdb4f0", "#a9d6f5", "#ffe59a", "#ffc2d4")
+CELEBRATION_COLORS = ("#ffc2d4", "#ffe59a", "#c8f0dc", "#cdb4f0", "#a9d6f5")
+
+# ══════════════════════════════════════════════════════════════
+#  Garden flowers (3 columns wide, drawn bottom-up from the ground line)
+#  "1" stem, "2" leaf, "3" petals, "4" flower centre
+# ══════════════════════════════════════════════════════════════
+STEM_COLOR, LEAF_COLOR = "#6fbf7c", "#a6dfa9"
+FLOWER_KINDS = {
+    "tulip":     {"head": ["3.3", "343", "333"], "colors": ("#ff9eb8", "#ff7a9c")},
+    "daisy":     {"head": [".3.", "343", ".3."], "colors": ("#ffffff", "#ffd36e")},
+    "bluebell":  {"head": ["3.3", ".4.", "3.3"], "colors": ("#9ccfff", "#fff1b0")},
+    "buttercup": {"head": ["333", "343", "333"], "colors": ("#ffe27a", "#f5a45d")},
+}
+_STEM = [".1.", "21.", ".12", ".1."]
+FLOWER_STAGES = 4          # 0 = nothing yet, 1 sprout, 2 stem, 3 bud, 4 bloom
+
+
+def flower_rows(kind, stage):
+    """Rows (top to bottom) of a flower of `kind` at growth `stage` (0-4)."""
+    if stage <= 0:
+        return []
+    if stage == 1:
+        return ["2.2", ".1."]
+    if stage == 2:
+        return list(_STEM)
+    if stage == 3:
+        return [".4.", ".3."] + _STEM
+    return list(FLOWER_KINDS[kind]["head"]) + _STEM
+
+
+def flower_colors(kind):
+    petal, centre = FLOWER_KINDS[kind]["colors"]
+    return {"1": STEM_COLOR, "2": LEAF_COLOR, "3": petal, "4": centre}

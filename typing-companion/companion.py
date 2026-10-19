@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-🐾 Taskbar Typing Companion
-A tiny, borderless pixel sprite (Mini Cat, Robot, or Wizard) that stands on top of your
-taskbar or perches on your active window. It reacts to every keystroke, speeds up with
-your WPM, celebrates new personal bests and falls asleep when you stop typing.
+🌸 Taskbar Typing Companion - spring edition
+A tiny pixel friend (Cat, Robot, Wizard or Bunny) that stands on your taskbar or perches on
+the window you're using. It types along with you, grows a little garden from your keystrokes,
+gets visits from butterflies, says kind things now and then, and naps when you stop.
 
 Run it with `pythonw companion.py` (or double-click run.bat).
-Right-click the sprite for settings; click it to pet it.
+Click it to pet it, double-click for today's journal, right-click for everything else.
 """
 
 import argparse
@@ -16,38 +16,56 @@ import os
 import random
 import sys
 import time
-import tkinter as tk
-import tkinter.font as tkfont
 
 import core
+import cozy
+import garden
 import keyboard_input
 import sprites
+import theme
 import winutil
+from effects import Butterfly, Particle
 
-__version__ = "2.0.0"
+try:                                    # pythonw has no console, so a missing tkinter needs a
+    import tkinter as tk                # message box rather than a silent exit (see main()).
+    import tkinter.font as tkfont
+    from bubble import Bubble, draw_round_rect, draw_shape
+except ImportError as _tk_import_error:   # pragma: no cover - depends on the Python install
+    tk = tkfont = None
+    TK_IMPORT_ERROR = _tk_import_error
+else:
+    TK_IMPORT_ERROR = None
+
+__version__ = "2.1.0"
 SCRIPT_PATH = os.path.abspath(__file__)
 log = logging.getLogger("companion")
 
 # ── Layout (in sprite pixels; one sprite pixel = `px` screen pixels) ───────────────────────
-HEAD_ROWS = 6              # empty rows above the sprite: room for the badge, hearts, sparkles
-PAD_COLS = 4               # empty columns each side, so effects can spread out
+HEAD_ROWS = 6              # empty rows above the sprite: room for the badge and effects
+PAD_COLS = 7               # columns each side: the garden grows here, effects spread out
+GARDEN_COLS = (PAD_COLS + 17, PAD_COLS - 3, PAD_COLS + 20, PAD_COLS - 6)   # growth order
 DOCK_MARGIN = 90           # screen px (at 100% DPI) between the docked sprite and the screen edge
 PERCH_SINK = 2             # screen px the feet sink into a perched window's top edge
-CAPTION_CLEARANCE = 150    # screen px kept free at the right end of a title bar (min/max/close)
+CAPTION_BUTTONS = 145      # screen px of minimise/maximise/close to keep clear when perching
 NO_TASKBAR_STRIP = 40      # stand-in taskbar height where there's no Windows API (dev only)
 
 # ── Timing ───────────────────────────────────────────────────────────────────────────────
 TICK_BUSY_MS = 33          # ~30 fps while anything is moving
 TICK_CALM_MS = 100         # resting loop; also bounds how fast a sleeping sprite wakes up
 HOP_SECS = 0.09
-IDLE_FLIP_SECS = 0.65      # tail wag / antenna blink period
+IDLE_FLIP_SECS = 0.65      # tail wag / antenna blink / ear twitch period
 SLEEP_FLIP_SECS = 1.1
 DOUBLE_CLICK_MS = 280      # wait this long before treating a click as a pet
 DRAG_THRESHOLD = 4         # screen px of movement before a click becomes a drag
 HOUSEKEEPING_SECS = 1.0
 STATS_FLUSH_SECS = 30.0
+SAVE_RETRY_SECS = 30.0     # after a failed settings write, wait this long before trying again
+BACKEND_RETRY_SECS = 10.0
 CELEBRATE_COOLDOWN = 60.0
 MIN_RECORD_WPM = 20
+GREET_DELAY = 1.5
+BUTTERFLY_GAP = (40.0, 110.0)    # seconds between butterfly visits while you rest
+FIREFLY_GAP = (2.5, 5.0)
 
 MODE_LABELS = {
     "taskbar": "📌 Dock to Taskbar",
@@ -61,28 +79,25 @@ def clamp(value, low, high):
     return max(low, min(high, value))
 
 
-class Particle:
-    """A little pixel-art effect (heart, sparkle, confetti...) that drifts and fades."""
-
-    __slots__ = ("x", "y", "vx", "vy", "ay", "age", "life", "shape", "color", "blinks")
-
-    def __init__(self, x, y, vx, vy, life, shape, color, ay=0.0, blinks=False):
-        self.x, self.y, self.vx, self.vy, self.ay = x, y, vx, vy, ay
-        self.age, self.life = 0.0, life
-        self.shape, self.color, self.blinks = shape, color, blinks
-
-
 class TypingCompanionApp:
     def __init__(self, settings_path=None, stats_path=None, start_input=True, demo=False,
-                 clock=time.monotonic):
+                 clock=time.monotonic, prefer_hook=False, rng=None):
         home = core.data_dir()
         self.settings_path = settings_path or os.path.join(home, "settings.json")
         self.cfg = core.load_settings(self.settings_path)
-        self.stats = core.Stats(stats_path or os.path.join(home, "stats.json"))
+        # --demo keeps its fake typing in memory, away from your real records.
+        self.stats = core.Stats(None if demo else (stats_path or os.path.join(home, "stats.json")))
         self.clock = clock
+        self.rng = rng or random.Random()
         self.meter = core.TypingMeter(clock=clock)
         self.backend = None
+        self.prefer_hook = prefer_hook
+        self._hook_failures = 0
         self.demo = demo
+        self.garden_boost = 25 if demo else 1          # the demo grows flowers 25x faster
+        self.garden = garden.Garden(self.stats.day, self.stats.keys_today * self.garden_boost)
+        self.coach = cozy.BreakCoach(self.cfg["break_minutes"])
+        now = clock()
 
         # Animation state
         self.mood = "idle"
@@ -90,20 +105,27 @@ class TypingCompanionApp:
         self.hop_until = 0.0
         self.hop_rows = 1
         self.blink_until = 0.0
-        self.next_blink = clock() + random.uniform(3.0, 8.0)
+        self.next_blink = now + self.rng.uniform(3.0, 8.0)
         self.wpm_shown = 0.0
-        self.banner = None                  # (text, colour, until)
         self.particles = []
+        self.butterflies = []
+        self.next_butterfly = now + self.rng.uniform(15.0, 40.0)
+        self.next_firefly = now
+        self._greet_at = now + GREET_DELAY
+        self._slept_since = None
         self._seen_seq = 0
         self._seen_total = 0
         self._run_start_best = self.stats.best_wpm
         self._celebrated = False
         self._next_celebrate = 0.0
-        self._last_step = clock()
+        self._last_step = now
         self._frame_name = "sit_a"
         self._shown_item = None             # (image, y) last pushed to the canvas
         self._badge_state = None
-        self._fx_drawn = False
+        self._garden_key = None
+        self._fx_live = set()               # canvas tags of the effects currently drawn
+        self._fx_serial = 0
+        self._content_top = 0               # window y of the topmost visible thing (badge or head)
         self._images = {}
 
         # Position / interaction state
@@ -117,31 +139,36 @@ class TypingCompanionApp:
         self._suppress_release = False
         self._pet_job = None
         self._tick_job = None
+        self._menu_open = False
         self._hidden = False
         self._closing = False
         self._shut = False
         self._hwnd = 0
         self._next_housekeeping = 0.0
-        self._next_stats_flush = clock() + STATS_FLUSH_SECS
+        self._next_stats_flush = now + STATS_FLUSH_SECS
         self._backend_retry_at = 0.0
         self._settings_dirty = False
+        self._settings_retry_at = 0.0
         self._demo_acc = 0.0
-        self._demo_t0 = clock()
+        self._demo_t0 = now
         self._demo_napped = -1
 
         self.root = tk.Tk()
         self.root.withdraw()                # stay hidden until we've positioned it
         self.root.report_callback_exception = self._on_tk_error
+        self.family = theme.pick_family(tkfont.families(self.root))
         self._init_metrics()
         self._init_window()
         self._init_canvas()
         self._init_menu()
+        self.bubble = Bubble(self.root, tkfont.Font(root=self.root, family=self.family, size=10), self.ui)
 
         if start_input:
-            self.backend = keyboard_input.start_backend(self.meter)
+            self.backend = keyboard_input.start_backend(self.meter, prefer_pynput=prefer_hook)
 
         self.step()
-        self._show()
+        if not self._hidden:                # a fullscreen app may already be running
+            self._show()
         self._tick()
 
     # ═════════════════════════════════════════════════════════
@@ -156,7 +183,9 @@ class TypingCompanionApp:
         self.win_w = self.spr + 2 * self.pad_x
         self.win_h = self.head + self.spr
         self.fx_px = max(2, self.px // 2)
-        self.font = tkfont.Font(family="Consolas", size=max(7, self.cfg["scale"] * 2), weight="bold")
+        self.fly_px = max(2, round(self.px * 0.75))
+        self.font = tkfont.Font(root=self.root, family=self.family, size=max(7, self.cfg["scale"] * 2),
+                                weight="bold")
         self.font_h = self.font.metrics("linespace")
 
     def _init_window(self):
@@ -184,46 +213,66 @@ class TypingCompanionApp:
         canvas.bind("<Button-3>", self._show_menu)
 
     def _create_items(self):
-        c = self.canvas
-        self.sprite_item = c.create_image(self.pad_x, self.head, anchor="nw")
-        cx = self.pad_x + self.spr // 2
-        self.badge_shadow = c.create_text(cx + 1, self.head, text="", fill="#000000", font=self.font,
-                                          anchor="s", state="hidden")
-        self.badge = c.create_text(cx, self.head, text="", fill="#ffffff", font=self.font,
-                                   anchor="s", state="hidden")
+        self.sprite_item = self.canvas.create_image(self.pad_x, self.head, anchor="nw")
         self._shown_item = None
         self._badge_state = None
-        self._fx_drawn = False
+        self._garden_key = None
+        self._fx_live = set()
+
+    def _styled_menu(self, parent):
+        menu = tk.Menu(parent, tearoff=0, font=(self.family, 10))
+        for option, value in theme.MENU_STYLE.items():
+            try:
+                menu.configure(**{option: value})
+            except tk.TclError:             # a platform may not support every option
+                pass
+        return menu
 
     def _init_menu(self):
-        self.menu = tk.Menu(self.root, tearoff=0)
-        self.var_char = tk.StringVar(value=self.cfg["character"])
-        self.var_mode = tk.StringVar(value=self.cfg["dock_mode"])
-        self.var_scale = tk.IntVar(value=self.cfg["scale"])
-        self.var_wpm = tk.BooleanVar(value=self.cfg["show_wpm"])
-        self.var_fullscreen = tk.BooleanVar(value=self.cfg["hide_fullscreen"])
-        self.var_autostart = tk.BooleanVar(value=False)
+        self.menu = self._styled_menu(self.root)
+        self.var_char = tk.StringVar(self.root, value=self.cfg["character"])
+        self.var_mode = tk.StringVar(self.root, value=self.cfg["dock_mode"])
+        self.var_scale = tk.IntVar(self.root, value=self.cfg["scale"])
+        self.var_wpm = tk.BooleanVar(self.root, value=self.cfg["show_wpm"])
+        self.var_fullscreen = tk.BooleanVar(self.root, value=self.cfg["hide_fullscreen"])
+        self.var_garden = tk.BooleanVar(self.root, value=self.cfg["garden"])
+        self.var_messages = tk.BooleanVar(self.root, value=self.cfg["messages"])
+        self.var_break = tk.IntVar(self.root, value=self.cfg["break_minutes"])
+        self.var_autostart = tk.BooleanVar(self.root, value=False)
 
-        self.menu.add_command(label=self.stats.summary(), state="disabled")
+        self.menu.add_command(label=self._menu_header(), state="disabled")
         self.menu.add_separator()
 
-        char_menu = tk.Menu(self.menu, tearoff=0)
+        char_menu = self._styled_menu(self.menu)
         for key, char in sprites.CHARACTERS.items():
             char_menu.add_radiobutton(label=char["name"], variable=self.var_char, value=key,
                                       command=lambda k=key: self.set_character(k))
         self.menu.add_cascade(label="Character", menu=char_menu)
 
-        mode_menu = tk.Menu(self.menu, tearoff=0)
+        mode_menu = self._styled_menu(self.menu)
         for key in core.DOCK_MODES:
             mode_menu.add_radiobutton(label=MODE_LABELS[key], variable=self.var_mode, value=key,
                                       command=lambda k=key: self.set_dock_mode(k))
         self.menu.add_cascade(label="Positioning Mode", menu=mode_menu)
 
-        size_menu = tk.Menu(self.menu, tearoff=0)
+        size_menu = self._styled_menu(self.menu)
         for scale in core.SCALES:
             size_menu.add_radiobutton(label=SIZE_LABELS[scale], variable=self.var_scale, value=scale,
                                       command=lambda s=scale: self.set_scale(s))
         self.menu.add_cascade(label="Size", menu=size_menu)
+
+        self.menu.add_separator()
+        self.menu.add_command(label="🌷 Today's Journal", command=self.show_journal)
+        self.menu.add_checkbutton(label="Spring Garden & Visitors", variable=self.var_garden,
+                                  command=self._on_garden_toggle)
+        self.menu.add_checkbutton(label="Friendly Messages", variable=self.var_messages,
+                                  command=self._on_messages_toggle)
+        break_menu = self._styled_menu(self.menu)
+        for minutes in core.BREAK_CHOICES:
+            label = f"Every {minutes} minutes" if minutes else "Off"
+            break_menu.add_radiobutton(label=label, variable=self.var_break, value=minutes,
+                                       command=lambda m=minutes: self.set_break_minutes(m))
+        self.menu.add_cascade(label="Stretch Reminders", menu=break_menu)
 
         self.menu.add_separator()
         self.menu.add_checkbutton(label="Show WPM Badge", variable=self.var_wpm, command=self._on_wpm_toggle)
@@ -238,6 +287,9 @@ class TypingCompanionApp:
         self.menu.add_command(label="Wake Up", command=self.wake_up)
         self.menu.add_separator()
         self.menu.add_command(label="Quit", command=self.quit)
+
+    def _menu_header(self):
+        return f"✿  {self.stats.summary()}"
 
     def _show(self):
         """Reveal the window (also used when a fullscreen app ends)."""
@@ -262,7 +314,8 @@ class TypingCompanionApp:
         busy = False
         try:
             self.step()
-            busy = bool(self.particles) or self.mood == "typing" or self._dragging or self._moving()
+            busy = (self.mood == "typing" or self._dragging or self._moving()
+                    or any(fx.lively for fx in self.particles) or any(b.lively for b in self.butterflies))
         except Exception:
             log.exception("update failed")      # keep animating even if one frame goes wrong
         try:
@@ -282,9 +335,11 @@ class TypingCompanionApp:
         snap = self.meter.snapshot(now)
         self._account(snap, now)
         self._animate(snap, now, dt)
+        self._ambient(now)
         self._update_position(now, dt)
-        self._update_particles(dt)
+        self._update_effects(dt)
         self._render(now)
+        self._update_bubble(now)
         self._housekeeping(now)
         return snap
 
@@ -292,7 +347,26 @@ class TypingCompanionApp:
         return self.cfg["dock_mode"] == "active_window" and self._target is not None and (
             abs(self._target[0] - self.win_x) > 1 or abs(self._target[1] - self.win_y) > 1)
 
-    # ── stats & records ──────────────────────────────────────
+    # ── words ────────────────────────────────────────────────
+    def say(self, text, icon=None, secs=5.0, priority=1, friendly=True):
+        """Show a speech bubble. `friendly` ones respect the Friendly Messages switch."""
+        if (friendly and not self.cfg["messages"]) or self._hidden or not text:
+            return False
+        return self.bubble.say(text, self.clock(), icon=icon, secs=secs, priority=priority)
+
+    def show_journal(self):
+        self.say(cozy.journal(self.stats, self.garden), "flower", secs=6.0, priority=3, friendly=False)
+
+    def _update_bubble(self, now):
+        if not self.bubble.text and not self.bubble.visible:
+            return
+        anchor_x = self.win_x + self.pad_x + self.spr / 2
+        top_y = self.win_y + self._content_top - int(2 * self.ui)
+        bottom_y = self.win_y + self.win_h
+        _mon, work = self._work_area_near(anchor_x, bottom_y - 1)
+        self.bubble.update(now, anchor_x, top_y, bottom_y, work, allowed=not self._hidden)
+
+    # ── stats, records, garden, breaks ───────────────────────
     def _account(self, snap, now):
         if snap.total != self._seen_total:
             self.stats.add_keys(snap.total - self._seen_total)
@@ -302,28 +376,49 @@ class TypingCompanionApp:
             if (not self._celebrated and now >= self._next_celebrate
                     and snap.wpm >= max(MIN_RECORD_WPM, self._run_start_best + 2)):
                 self._celebrate(now, snap.wpm)
+        for event, slot in self.garden.update(self.stats.day, self.stats.keys_today * self.garden_boost):
+            if event == "bloom" and self.cfg["garden"]:
+                self._bloom_puff(slot)
+                self.say(cozy.bloom_message(self.garden.bloomed, garden.SLOTS), "flower", priority=2)
+        self.coach.minutes = self.cfg["break_minutes"]
+        if self.coach.update(now, snap.mood == "typing", snap.idle_for):
+            self.say(cozy.break_message(self.cfg["break_minutes"], self.rng), "cup", secs=14.0,
+                     priority=2, friendly=False)
+        if self._greet_at is not None and now >= self._greet_at:
+            self._greet_at = None
+            text, icon = cozy.greeting(time.localtime().tm_hour)
+            self.say(text, icon, secs=5.0, priority=1)
 
     def _celebrate(self, now, wpm):
         self._celebrated = True
         self._next_celebrate = now + CELEBRATE_COOLDOWN
-        self.banner = (f"NEW BEST {int(round(wpm))}!", "#ffd32a", now + 2.6)
-        cx = self.pad_x + self.spr / 2
-        for _unused in range(26):
+        self.say(cozy.best_message(wpm), "star", secs=4.0, priority=3)
+        cx, top = self.pad_x + self.spr / 2, self.head + 2 * self.px
+        for i in range(28):
+            shape = "spark" if i % 3 == 0 else "petal"
+            colors = None if shape == "spark" else (self.rng.choice(sprites.CELEBRATION_COLORS),)
             self.particles.append(Particle(
-                cx + random.uniform(-3, 3) * self.px, self.head + 2 * self.px,
-                random.uniform(-9, 9) * self.px, random.uniform(-15, -6) * self.px,
-                random.uniform(0.9, 1.5), "dot", random.choice(sprites.CONFETTI_COLORS), ay=18 * self.px))
+                cx + self.rng.uniform(-3, 3) * self.px, top,
+                self.rng.uniform(-9, 9) * self.px, self.rng.uniform(-15, -6) * self.px,
+                self.rng.uniform(0.9, 1.5), shape, colors, ay=16 * self.px,
+                sway=self.px, sway_hz=self.rng.uniform(0.8, 1.6), phase=self.rng.uniform(0, 6.3)))
 
     # ── animation state ──────────────────────────────────────
     def _animate(self, snap, now, dt):
         mood = snap.mood
         if mood != self.mood:
             previous, self.mood = self.mood, mood
+            if mood == "sleeping":
+                self._slept_since = now
             if mood == "typing":
                 self._run_start_best = self.stats.best_wpm
                 self._celebrated = False
-                if previous == "sleeping":
+            if previous == "sleeping":
+                if mood == "typing":
                     self._startle(now)
+                if self._slept_since is not None and now - self._slept_since >= cozy.WELCOME_BACK_AFTER:
+                    self.say("Welcome back! I kept your garden company.", "sun", secs=4.0)
+                self._slept_since = None
         if snap.press_seq != self._seen_seq:        # a real keystroke: swap paws right now
             self._seen_seq = snap.press_seq
             self.paw = not self.paw
@@ -337,45 +432,89 @@ class TypingCompanionApp:
 
         if mood == "idle" and now >= self.next_blink:
             self.blink_until = now + 0.16
-            self.next_blink = now + random.uniform(3.5, 8.0)
-        if mood == "typing" and self.wpm_shown >= core.WPM_FAST and random.random() < dt * 9.0:
-            self._spawn_sparkle()
+            self.next_blink = now + self.rng.uniform(3.5, 8.0)
+        if mood == "typing" and self.wpm_shown >= core.WPM_FAST and self.rng.random() < dt * 9.0:
+            self._spawn_turbo()
 
     def _startle(self, now):
         self.hop_until = now + 0.28
         self.hop_rows = 2
         self.particles.append(Particle(
-            self.pad_x + self.spr * 0.72, self.head - self.px, 0, -2 * self.px, 0.7,
-            "bang", sprites.BANG_COLOR))
+            self.pad_x + self.spr * 0.72, self.head - self.px, 0, -2 * self.px, 0.7, "bang"))
 
-    def _spawn_sparkle(self):
-        """Sparkles fly up beside the head (never over the centred WPM badge)."""
-        char = sprites.CHARACTERS[self.cfg["character"]]
-        side = random.choice((-1, 1))
-        x = self.pad_x + self.spr / 2 + side * random.uniform(4.5, 7.5) * self.px
+    def _head_y(self):
+        frame = sprites.CHARACTERS[self.cfg["character"]]["frames"][self._frame_name]
+        return self.head + sprites.first_row(frame) * self.px
+
+    def _spawn_turbo(self):
+        """Turbo typing: blossom petals puff up from the keyboard, with the odd sparkle."""
+        side = self.rng.choice((-1, 1))
+        x = self.pad_x + self.spr / 2 + side * self.rng.uniform(3.5, 7.5) * self.px
+        if self.rng.random() < 0.25:
+            char = sprites.CHARACTERS[self.cfg["character"]]
+            self.particles.append(Particle(
+                x, self.head + self.rng.randint(1, 8) * self.px, side * self.rng.uniform(0.5, 2) * self.px,
+                -self.rng.uniform(3, 7) * self.px, self.rng.uniform(0.45, 0.8), "spark",
+                (char["sparkle"], "#fffbe6"), blinks=True))
+            return
         self.particles.append(Particle(
-            x, self.head + random.randint(1, 8) * self.px,
-            side * random.uniform(0.5, 2) * self.px, -random.uniform(3, 7) * self.px,
-            random.uniform(0.45, 0.8), "spark", char["sparkle"], blinks=True))
+            x, self.head + self.rng.uniform(8, 13) * self.px, side * self.rng.uniform(1, 4) * self.px,
+            -self.rng.uniform(5, 9) * self.px, self.rng.uniform(0.8, 1.3), "petal",
+            (self.rng.choice(sprites.PETAL_COLORS),), ay=7 * self.px, sway=self.px,
+            sway_hz=self.rng.uniform(0.8, 1.5), phase=self.rng.uniform(0, 6.3)))
 
     def _spawn_hearts(self):
         for _unused in range(5):
             self.particles.append(Particle(
-                self.pad_x + random.randint(3, 11) * self.px, self.head + random.randint(0, 3) * self.px,
-                random.uniform(-1.5, 1.5) * self.px, -random.uniform(4, 7) * self.px,
-                random.uniform(0.8, 1.2), "heart", sprites.HEART_COLOR))
+                self.pad_x + self.rng.randint(3, 11) * self.px, self.head + self.rng.randint(0, 3) * self.px,
+                self.rng.uniform(-1.5, 1.5) * self.px, -self.rng.uniform(4, 7) * self.px,
+                self.rng.uniform(0.8, 1.2), "heart", sway=self.px * 0.6, sway_hz=1.2,
+                phase=self.rng.uniform(0, 6.3)))
 
-    def _update_particles(self, dt):
-        alive = []
-        for p in self.particles:
-            p.age += dt
-            if p.age >= p.life:
-                continue
-            p.x += p.vx * dt
-            p.y += p.vy * dt
-            p.vy += p.ay * dt
-            alive.append(p)
-        self.particles = alive[-80:]
+    def _flower_top(self, slot):
+        rows = sprites.flower_rows(self.garden.kinds[slot], self.garden.stages[slot])
+        return GARDEN_COLS[slot] * self.px + 1.5 * self.px, self.win_h - max(1, len(rows)) * self.px
+
+    def _bloom_puff(self, slot):
+        x, y = self._flower_top(slot)
+        for _unused in range(6):
+            self.particles.append(Particle(
+                x + self.rng.uniform(-1, 1) * self.px, y, self.rng.uniform(-3, 3) * self.px,
+                -self.rng.uniform(3, 6) * self.px, self.rng.uniform(0.6, 1.0), "spark", blinks=True))
+
+    def _ambient(self, now):
+        """Butterflies visit while you rest; fireflies glow while the companion sleeps."""
+        if not self.cfg["garden"] or self.mood == "typing":
+            return
+        if not self.butterflies and now >= self.next_butterfly:
+            self.next_butterfly = now + self.rng.uniform(*BUTTERFLY_GAP)
+            self._spawn_butterfly()
+        if self.mood == "sleeping" and now >= self.next_firefly:
+            self.next_firefly = now + self.rng.uniform(*FIREFLY_GAP)
+            if sum(1 for p in self.particles if p.shape == "firefly") < 3:
+                self.particles.append(Particle(
+                    self.rng.uniform(self.pad_x - 2 * self.px, self.pad_x + self.spr + 2 * self.px),
+                    self.head + self.rng.uniform(2, 10) * self.px, self.rng.uniform(-1, 1) * self.px,
+                    -self.rng.uniform(0.3, 1.5) * self.px, self.rng.uniform(3.0, 5.0), "firefly",
+                    sway=self.px * 1.5, sway_hz=0.4, phase=self.rng.uniform(0, 6.3), pulse_hz=0.8))
+
+    def _spawn_butterfly(self):
+        u = self.fly_px
+        side = self.rng.choice((-1, 1))
+        start = (-6 * u if side < 0 else self.win_w + u, self.head + self.rng.uniform(0, 3) * self.px)
+        bloomed = [slot for slot, stage in enumerate(self.garden.stages) if stage >= sprites.FLOWER_STAGES]
+        if bloomed and self.rng.random() < 0.6:
+            fx, fy = self._flower_top(self.rng.choice(bloomed))
+            rest = (fx - 2.5 * u, fy - 4 * u)
+        else:                                   # perch on the companion's head
+            rest = (self.pad_x + self.spr / 2 - 2.5 * u, max(0.0, self._head_y() - 4 * u))
+        leave = (self.win_w + 8 * u if side < 0 else -8 * u, self.rng.uniform(-2, 1) * self.px)
+        self.butterflies.append(Butterfly(start, rest, leave, self.rng.choice(sprites.BUTTERFLY_WINGS),
+                                          u, rest_secs=self.rng.uniform(3.0, 6.0)))
+
+    def _update_effects(self, dt):
+        self.particles = [p for p in self.particles if p.step(dt)][-90:]
+        self.butterflies = [b for b in self.butterflies if b.step(dt)]
 
     # ── rendering ────────────────────────────────────────────
     def _current_frame_name(self, now):
@@ -399,6 +538,7 @@ class TypingCompanionApp:
 
     def _render(self, now):
         c = self.canvas
+        self._draw_garden()
         name = self._current_frame_name(now)
         self._frame_name = name
         hop = self.hop_rows if now < self.hop_until else 0
@@ -409,44 +549,82 @@ class TypingCompanionApp:
             c.coords(self.sprite_item, self.pad_x, y)
             self._shown_item = item
 
-        # Badge: hugs the top of whatever pose is showing.
-        text, colour = "", "#ffffff"
-        if self.banner and now < self.banner[2]:
-            text, colour = self.banner[0], self.banner[1]
-        elif self.banner:
-            self.banner = None
-        if not text and self.cfg["show_wpm"] and self.mood == "typing":
+        # The WPM badge: a soft pastel pill hugging the top of whatever pose is showing.
+        text, style = "", theme.BADGE_CALM
+        if self.cfg["show_wpm"] and self.mood == "typing":
             text = f"{int(round(self.wpm_shown))} WPM"
             if self.wpm_shown >= core.WPM_FAST:
-                colour = "#ffd32a"
-        frame = sprites.CHARACTERS[self.cfg["character"]]["frames"][name]
-        by = max(self.font_h, self.head + sprites.first_row(frame) * self.px - int(2 * self.ui) - hop * self.px)
-        badge = (text, colour, by)
+                style = theme.BADGE_TURBO
+        pill_h = self.font_h + 2 * self.fx_px
+        head_y = self._head_y() - hop * self.px
+        by = max(pill_h, head_y - int(2 * self.ui))
+        badge = (text, style, by)
         if badge != self._badge_state:
             self._badge_state = badge
+            c.delete("badge")
             if text:
-                cx = self.pad_x + self.spr // 2
-                c.coords(self.badge_shadow, cx + 1, by + 1)
-                c.coords(self.badge, cx, by)
-                c.itemconfigure(self.badge_shadow, text=text, state="normal")
-                c.itemconfigure(self.badge, text=text, fill=colour, state="normal")
-            else:
-                c.itemconfigure(self.badge_shadow, state="hidden")
-                c.itemconfigure(self.badge, state="hidden")
+                fill, edge, ink = style
+                s = self.fx_px
+                w = self.font.measure(text) + 6 * s
+                cx = self.pad_x + self.spr / 2
+                draw_round_rect(c, int(cx - w / 2), by - pill_h, int(cx + w / 2), by, s, fill, edge, tags="badge")
+                c.create_text(cx, by - pill_h / 2, text=text, font=self.font, fill=ink, tags="badge")
+        self._content_top = (by - pill_h) if text else head_y
 
-        if self.particles or self._fx_drawn:
-            c.delete("fx")
-            for p in self.particles:
-                if p.blinks and p.age > p.life * 0.65 and int(p.age * 30) % 2:
-                    continue
-                for ry, row in enumerate(sprites.SHAPES[p.shape]):
-                    for rx, cell in enumerate(row):
-                        if cell == "1":
-                            x0 = int(p.x) + rx * self.fx_px
-                            y0 = int(p.y) + ry * self.fx_px
-                            c.create_rectangle(x0, y0, x0 + self.fx_px, y0 + self.fx_px, fill=p.color,
-                                               outline=p.color, tags="fx")
-            self._fx_drawn = bool(self.particles)
+        if self.particles or self.butterflies or self._fx_live:
+            live = set()
+            for fx in self.particles:
+                live.add(self._draw_effect(fx, self.fx_px))
+            for fx in self.butterflies:
+                live.add(self._draw_effect(fx, self.fly_px))
+            for tag in self._fx_live - live:          # effects that finished this frame
+                c.delete(tag)
+            self._fx_live = live
+
+    def _draw_effect(self, fx, size):
+        """Effects keep their canvas items and are moved, not redrawn, every frame."""
+        c = self.canvas
+        x, y = (int(v) for v in fx.position())
+        shown = fx.visible()
+        drawn = fx.drawn
+        if drawn is None or drawn[0] != fx.shape:     # new, or a butterfly flapped its wings
+            if fx.tag is None:
+                self._fx_serial += 1
+                fx.tag = f"fx{self._fx_serial}"
+            else:
+                c.delete(fx.tag)
+            draw_shape(c, fx.shape, x, y, size, fx.colors, tags=("fx", fx.tag))
+            if not shown:
+                c.itemconfigure(fx.tag, state="hidden")
+        else:
+            if (x, y) != drawn[1:3]:
+                c.move(fx.tag, x - drawn[1], y - drawn[2])
+            if shown != drawn[3]:
+                c.itemconfigure(fx.tag, state="normal" if shown else "hidden")
+        fx.drawn = (fx.shape, x, y, shown)
+        return fx.tag
+
+    def _draw_garden(self):
+        key = (self.cfg["garden"], tuple(self.garden.stages), tuple(self.garden.kinds), self.px)
+        if key == self._garden_key:
+            return
+        self._garden_key = key
+        c, px = self.canvas, self.px
+        c.delete("garden")
+        if not self.cfg["garden"]:
+            return
+        for slot, col in enumerate(GARDEN_COLS):
+            kind = self.garden.kinds[slot]
+            rows = sprites.flower_rows(kind, self.garden.stages[slot])
+            colors = sprites.flower_colors(kind)
+            top = self.win_h - len(rows) * px
+            for ry, row in enumerate(rows):
+                for rx, cell in enumerate(row):
+                    if cell in colors:
+                        x0, y0 = (col + rx) * px, top + ry * px
+                        c.create_rectangle(x0, y0, x0 + px, y0 + px, fill=colors[cell], outline="",
+                                           tags="garden")
+        c.tag_lower("garden")
 
     # ═════════════════════════════════════════════════════════
     #  Positioning
@@ -493,7 +671,8 @@ class TypingCompanionApp:
             return None                              # nothing worth perching on: stay put
         wl, wt, wr, _wb = rect
         _mon, (al, at, ar, _ab) = self._work_area_near((wl + wr) // 2, wt)
-        sx = max(wl + int(20 * self.ui), wr - self.spr - int(CAPTION_CLEARANCE * self.ui))
+        # Keep the whole window (garden included) clear of the caption buttons.
+        sx = max(wl + int(20 * self.ui), wr - self.spr - self.pad_x - int(CAPTION_BUTTONS * self.ui))
         sx = clamp(sx, al, max(al, ar - self.spr))
         sy = max(at, wt - self.spr + int(PERCH_SINK * self.ui))   # maximised: no room above, stay on-screen
         return sx - self.pad_x, sy - self.head
@@ -548,7 +727,7 @@ class TypingCompanionApp:
         return self.win_x + self.pad_x, self.win_y + self.head
 
     # ═════════════════════════════════════════════════════════
-    #  Mouse: drag, pet, menu
+    #  Mouse: drag, pet, journal, menu
     # ═════════════════════════════════════════════════════════
     def _on_press(self, event):
         self._press = (event.x_root, event.y_root, self.win_x, self.win_y)
@@ -602,8 +781,7 @@ class TypingCompanionApp:
             self.root.after_cancel(self._pet_job)
             self._pet_job = None
         self._suppress_release = True
-        self.var_wpm.set(not self.cfg["show_wpm"])
-        self._on_wpm_toggle()
+        self.show_journal()
 
     def _pet(self):
         self._pet_job = None
@@ -611,6 +789,8 @@ class TypingCompanionApp:
         if self.mood != "sleeping":
             self.hop_until = self.clock() + 0.2
             self.hop_rows = 1
+        if self.rng.random() < 0.4:
+            self.say(cozy.pet_line(self.cfg["character"], self.rng), "heart", secs=2.6, priority=0)
 
     def _enter_free(self, sx, sy):
         self.cfg["free_x"], self.cfg["free_y"] = int(sx), int(sy)
@@ -623,9 +803,11 @@ class TypingCompanionApp:
         # A popup menu only dismisses properly when its owner is foreground; we hand focus
         # straight back to the window you were typing in afterwards.
         winutil.focus_window(own)
+        self._menu_open = True
         try:
             self.menu.tk_popup(event.x_root, event.y_root)
         finally:
+            self._menu_open = False
             try:
                 self.menu.grab_release()
             except tk.TclError:
@@ -634,7 +816,7 @@ class TypingCompanionApp:
                 winutil.restore_foreground(previous)
 
     def _refresh_menu(self):
-        self.menu.entryconfigure(0, label=self.stats.summary())
+        self.menu.entryconfigure(0, label=self._menu_header())
         self.var_autostart.set(winutil.autostart_enabled())
 
     # ═════════════════════════════════════════════════════════
@@ -645,6 +827,7 @@ class TypingCompanionApp:
             self.cfg["character"] = key
             self.var_char.set(key)
             self._shown_item = None
+            self._badge_state = None
             self._settings_dirty = True
 
     def _set_mode(self, mode, reposition=True):
@@ -676,6 +859,7 @@ class TypingCompanionApp:
         self.cfg["scale"] = scale
         self.var_scale.set(scale)
         self.particles = []
+        self.butterflies = []
         self._images.clear()
         self._init_metrics()
         self.canvas.config(width=self.win_w, height=self.win_h)
@@ -688,6 +872,13 @@ class TypingCompanionApp:
         self._settings_dirty = True
         self._update_position(self.clock(), 0.0, force=True)
 
+    def set_break_minutes(self, minutes):
+        if minutes in core.BREAK_CHOICES:
+            self.cfg["break_minutes"] = minutes
+            self.var_break.set(minutes)
+            self.coach.minutes = minutes
+            self._settings_dirty = True
+
     def _on_wpm_toggle(self):
         self.cfg["show_wpm"] = bool(self.var_wpm.get())
         self._badge_state = None
@@ -695,6 +886,17 @@ class TypingCompanionApp:
 
     def _on_fullscreen_toggle(self):
         self.cfg["hide_fullscreen"] = bool(self.var_fullscreen.get())
+        self._settings_dirty = True
+
+    def _on_garden_toggle(self):
+        self.cfg["garden"] = bool(self.var_garden.get())
+        if not self.cfg["garden"]:
+            self.butterflies = []
+            self.particles = [p for p in self.particles if p.shape != "firefly"]
+        self._settings_dirty = True
+
+    def _on_messages_toggle(self):
+        self.cfg["messages"] = bool(self.var_messages.get())
         self._settings_dirty = True
 
     def _on_autostart_toggle(self):
@@ -719,27 +921,37 @@ class TypingCompanionApp:
         hide = self.cfg["hide_fullscreen"] and winutil.fullscreen_app_running()
         if hide and not self._hidden:
             self.root.withdraw()
+            self.bubble.hide()
             self._hidden = True
         elif not hide and self._hidden:
             self._show()
-        if not self._hidden:
-            if winutil.IS_WINDOWS:
-                winutil.keep_on_top(self._hwnd)         # the taskbar pushes us under it when clicked
-            else:
-                try:
-                    self.root.lift()
-                except tk.TclError:
-                    pass
+        # Re-assert "on top" (clicking the taskbar pushes us under it) - but never while our
+        # menu is open, or the sprite would cover the menu.
+        if not self._hidden and not self._menu_open:
+            # The bubble goes second so it always sits above the companion.
+            for hwnd, window, shown in ((self._hwnd, self.root, True),
+                                        (self.bubble.hwnd, self.bubble.win, self.bubble.visible)):
+                if shown and not winutil.keep_on_top(hwnd):
+                    try:
+                        window.lift()               # off Windows (or if SetWindowPos failed)
+                    except tk.TclError:
+                        pass
 
         if self.backend is not None and not self.backend.alive() and now >= self._backend_retry_at:
+            if getattr(self.backend, "name", "") == "pynput":
+                self._hook_failures += 1
             log.warning("keyboard backend stopped; restarting")
-            self._backend_retry_at = now + 10.0
+            self._backend_retry_at = now + BACKEND_RETRY_SECS
             self.backend.stop()
-            self.backend = keyboard_input.start_backend(self.meter)
+            # A hook that keeps dying is given up for polling, which always works.
+            self.backend = keyboard_input.start_backend(
+                self.meter, prefer_pynput=self.prefer_hook and self._hook_failures < 2)
 
-        if self._settings_dirty:
+        if self._settings_dirty and now >= self._settings_retry_at:
             if core.save_settings(self.settings_path, self.cfg):
                 self._settings_dirty = False
+            else:
+                self._settings_retry_at = now + SAVE_RETRY_SECS
         if self.stats.dirty and now >= self._next_stats_flush:
             self.stats.save()
             self._next_stats_flush = now + STATS_FLUSH_SECS
@@ -757,11 +969,12 @@ class TypingCompanionApp:
             if self._demo_napped != cycle:
                 self._demo_napped = cycle
                 self.meter.nap(now)
+                self.next_butterfly = min(self.next_butterfly, now + 1.0)   # show off a visitor
             return
         self._demo_acc += rate * dt
         while self._demo_acc >= 1.0:
             self._demo_acc -= 1.0
-            vk = random.randint(0x41, 0x5A)
+            vk = self.rng.randint(0x41, 0x5A)
             self.meter.key_down(vk, False, now)
             self.meter.key_up(vk)
 
@@ -817,12 +1030,20 @@ def setup_logging():
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Taskbar Typing Companion")
     parser.add_argument("--demo", action="store_true",
-                        help="animate with synthetic typing (idle / slow / brisk / turbo / nap)")
+                        help="animate with synthetic typing (idle / slow / brisk / turbo / nap); "
+                             "nothing is saved to your stats")
     parser.add_argument("--no-input", action="store_true", help="don't watch the keyboard")
+    parser.add_argument("--hook", action="store_true",
+                        help="use a pynput keyboard hook instead of polling (needs `pip install pynput`)")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args(argv)
 
     setup_logging()
+    if tk is None:
+        winutil.show_message("Typing Companion", "This Python has no tkinter, which the companion needs "
+                             f"to draw itself.\n\nReinstall Python from python.org with the "
+                             f"\"tcl/tk\" option ticked.\n\n({TK_IMPORT_ERROR})")
+        return 1
     if not winutil.acquire_single_instance():
         winutil.show_message("Typing Companion", "Typing Companion is already running - "
                              "look for it near your taskbar.")
@@ -830,7 +1051,13 @@ def main(argv=None):
     winutil.enable_dpi_awareness()
     winutil.attach_to_default_desktop()
     log.info("starting Typing Companion %s", __version__)
-    app = TypingCompanionApp(start_input=not args.no_input, demo=args.demo)
+    try:
+        app = TypingCompanionApp(start_input=not args.no_input, demo=args.demo, prefer_hook=args.hook)
+    except Exception as exc:                        # under pythonw this would otherwise vanish silently
+        log.exception("could not start")
+        winutil.show_message("Typing Companion", f"Sorry - the companion couldn't start:\n{exc}\n\n"
+                             f"Details: {os.path.join(core.data_dir(), 'companion.log')}")
+        return 1
     app.run()
     return 0
 

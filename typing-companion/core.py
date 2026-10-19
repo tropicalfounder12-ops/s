@@ -140,6 +140,17 @@ def read_json(path):
         return {}
 
 
+_last_warned = {}          # path -> time of the last "could not write" warning
+WARN_EVERY = 600.0
+
+
+def _warn_write(path, exc):
+    now = time.monotonic()
+    if now - _last_warned.get(path, -WARN_EVERY) >= WARN_EVERY:     # don't flood the log
+        _last_warned[path] = now
+        log.warning("could not write %s: %s", path, exc)
+
+
 def write_json(path, data):
     """Atomic write (temp file + rename) so a crash can't leave a half-written file."""
     try:
@@ -157,12 +168,13 @@ def write_json(path, data):
             raise
         return True
     except OSError as exc:
-        log.warning("could not write %s: %s", path, exc)
+        _warn_write(path, exc)
         return False
 
 
 DOCK_MODES = ("taskbar", "active_window", "free")
 SCALES = (3, 4, 5, 6)
+BREAK_CHOICES = (0, 30, 45, 60, 90)      # minutes; 0 = no break reminders
 
 DEFAULT_SETTINGS = {
     "character": "cat",
@@ -170,6 +182,9 @@ DEFAULT_SETTINGS = {
     "scale": 4,
     "show_wpm": True,
     "hide_fullscreen": True,
+    "garden": True,          # flowers, butterflies and fireflies
+    "messages": True,        # friendly speech bubbles
+    "break_minutes": 45,
     "dock_x": None,      # sprite's left edge while docked to the taskbar
     "free_x": None,      # sprite's top-left corner while free floating
     "free_y": None,
@@ -186,6 +201,9 @@ _VALIDATORS = {
     "scale": lambda v: v in SCALES,
     "show_wpm": lambda v: isinstance(v, bool),
     "hide_fullscreen": lambda v: isinstance(v, bool),
+    "garden": lambda v: isinstance(v, bool),
+    "messages": lambda v: isinstance(v, bool),
+    "break_minutes": lambda v: _is_int(v) and v in BREAK_CHOICES,
     "dock_x": lambda v: v is None or _is_int(v),
     "free_x": lambda v: v is None or _is_int(v),
     "free_y": lambda v: v is None or _is_int(v),
@@ -211,12 +229,16 @@ def save_settings(path, settings):
 
 
 class Stats:
-    """Lifetime counters: keys today, best WPM and total keys. Counts only - never key contents."""
+    """Lifetime counters: keys today, best WPM and total keys. Counts only - never key contents.
+
+    With path=None the stats live in memory only (used by --demo so fake typing never
+    lands in your real records).
+    """
 
     def __init__(self, path, today=None):
         self.path = path
         self.dirty = False
-        raw = read_json(path)
+        raw = read_json(path) if path else {}
         self.day = raw.get("day") if isinstance(raw.get("day"), str) else ""
         self.keys_today = self._count(raw.get("keys_today"))
         self.total_keys = self._count(raw.get("total_keys"))
@@ -256,6 +278,9 @@ class Stats:
         return f"Today: {self.keys_today:,} keys  ·  Best: {best}"
 
     def save(self):
+        if not self.path:
+            self.dirty = False
+            return
         if write_json(self.path, {
             "day": self.day,
             "keys_today": self.keys_today,

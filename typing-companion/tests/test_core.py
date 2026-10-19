@@ -118,14 +118,16 @@ class SettingsTests(unittest.TestCase):
     def test_roundtrip(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "sub", "settings.json")      # directory is created on demand
-            cfg = dict(core.DEFAULT_SETTINGS, character="wizard", scale=6, dock_mode="free",
-                       free_x=-1900, free_y=40, show_wpm=False)
+            cfg = dict(core.DEFAULT_SETTINGS, character="bunny", scale=6, dock_mode="free",
+                       free_x=-1900, free_y=40, show_wpm=False, garden=False, messages=False,
+                       break_minutes=90)
             self.assertTrue(core.save_settings(path, cfg))
             self.assertEqual(core.load_settings(path), cfg)
 
     def test_bad_values_fall_back_individually(self):
         raw = {"character": "dragon", "dock_mode": "free", "scale": 99, "show_wpm": "yes",
-               "free_x": 12.5, "free_y": True, "dock_x": 300, "unknown": 1}
+               "free_x": 12.5, "free_y": True, "dock_x": 300, "unknown": 1,
+               "break_minutes": 7, "garden": 0, "messages": False}
         cfg = core.sanitize_settings(raw)
         self.assertEqual(cfg["character"], "cat")
         self.assertEqual(cfg["dock_mode"], "free")          # the valid ones survive
@@ -135,6 +137,19 @@ class SettingsTests(unittest.TestCase):
         self.assertIsNone(cfg["free_y"])                    # bool is not an int here
         self.assertEqual(cfg["dock_x"], 300)
         self.assertNotIn("unknown", cfg)
+        self.assertEqual(cfg["break_minutes"], 45)          # 7 isn't one of the choices
+        self.assertIs(cfg["garden"], True)                  # 0 isn't a bool
+        self.assertIs(cfg["messages"], False)
+
+    def test_write_failures_are_reported_once_not_every_second(self):
+        with tempfile.TemporaryDirectory() as d:
+            blocked = os.path.join(d, "settings.json")
+            os.makedirs(blocked)                            # a folder where the file should go
+            core._last_warned.clear()
+            with self.assertLogs("companion", "WARNING") as logs:
+                for _ in range(50):
+                    self.assertFalse(core.save_settings(blocked, core.DEFAULT_SETTINGS))
+            self.assertEqual(len(logs.output), 1)
 
     def test_save_leaves_no_temp_files(self):
         with tempfile.TemporaryDirectory() as d:
@@ -155,6 +170,15 @@ class SettingsTests(unittest.TestCase):
 
 
 class StatsTests(unittest.TestCase):
+    def test_in_memory_stats_never_touch_disk(self):
+        with tempfile.TemporaryDirectory() as d:
+            stats = core.Stats(None)
+            stats.add_keys(500)
+            stats.record_wpm(120)
+            stats.save()
+            self.assertFalse(stats.dirty)
+            self.assertEqual(os.listdir(d), [])
+
     def test_counts_persist_and_roll_over_at_midnight(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "stats.json")

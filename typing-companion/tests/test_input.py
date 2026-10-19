@@ -158,21 +158,30 @@ class PynputBackendTests(unittest.TestCase):
         sys.modules["pynput"] = None                               # makes `import pynput` fail
         meter = core.TypingMeter(clock=FakeClock())
         with mock.patch.object(winutil, "IS_WINDOWS", False):
-            self.assertIsNone(keyboard_input.start_backend(meter))
+            self.assertIsNone(keyboard_input.start_backend(meter, prefer_pynput=True))
         with mock.patch.object(winutil, "IS_WINDOWS", True):
-            backend = keyboard_input.start_backend(meter)
+            backend = keyboard_input.start_backend(meter, prefer_pynput=True)
             try:
                 self.assertEqual(backend.name, "polling")
             finally:
                 backend.stop()
 
-    def test_start_backend_prefers_pynput(self):
+    def test_start_backend_uses_pynput_only_when_asked(self):
         install_fake_pynput()
-        backend = keyboard_input.start_backend(core.TypingMeter(clock=FakeClock()))
+        backend = keyboard_input.start_backend(core.TypingMeter(clock=FakeClock()), prefer_pynput=True)
         try:
             self.assertEqual(backend.name, "pynput")
         finally:
             backend.stop()
+
+    def test_polling_is_the_default_on_windows(self):
+        install_fake_pynput()                                      # even with pynput installed
+        with mock.patch.object(winutil, "IS_WINDOWS", True):
+            backend = keyboard_input.start_backend(core.TypingMeter(clock=FakeClock()))
+            try:
+                self.assertEqual(backend.name, "polling")
+            finally:
+                backend.stop()
 
 
 # ══════════════════════════════════════════════════════════════

@@ -1,8 +1,11 @@
 """Global keyboard watching. Two interchangeable backends feed a TypingMeter:
 
-* PynputBackend  - low-level keyboard hook via the optional `pynput` package (preferred).
-* PollingBackend - polls GetAsyncKeyState; needs nothing installed, so the companion still
-                   works on a fresh Python install where `pip install pynput` was never run.
+* PollingBackend - polls GetAsyncKeyState ~50 times a second (the default). It needs nothing
+                   installed and sits outside Windows' input path, so it can never slow down
+                   your typing and Windows can't silently switch it off.
+* PynputBackend  - a low-level keyboard hook via the optional `pynput` package (`--hook`).
+                   Every keystroke on the system then waits for this Python process, and
+                   Windows quietly removes hooks it thinks are too slow - hence opt-in only.
 
 Only the timing of key presses is forwarded. The key itself is reduced to an opaque id
 that lives in memory while the key is held and is then forgotten.
@@ -88,7 +91,7 @@ def _polled_keys():
 
 class PollingBackend:
     name = "polling"
-    POLL_HZ = 60
+    POLL_HZ = 50            # a key is held for 50-150 ms when typing, so 20 ms polls catch every press
 
     def __init__(self, meter, is_down=winutil.async_key_is_down, keys=None):
         self._meter = meter
@@ -130,8 +133,8 @@ class PollingBackend:
         return bool(self._thread and self._thread.is_alive())
 
 
-def start_backend(meter, prefer_pynput=True):
-    """Start the best available backend. Returns it, or None if nothing could be started."""
+def start_backend(meter, prefer_pynput=False):
+    """Start a backend (polling unless `prefer_pynput`). Returns it, or None if none could start."""
     if prefer_pynput:
         try:
             backend = PynputBackend(meter)
